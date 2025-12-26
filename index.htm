@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon.png">
+<title>Textarea</title>
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html {
+    color-scheme: light dark;
+    background-color: #fff;
+    color: #161616;
+
+    @media (prefers-color-scheme: dark) {
+      background-color: #000;
+      color: #fff;
+    }
+  }
+
+  /* Minimal toolbar */
+  .toolbar{
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 10;
+    display: flex;
+    gap: 10px;
+  }
+  .toolbar button{
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid color-mix(in oklab, currentColor 22%, transparent);
+    background: color-mix(in oklab, canvas 92%, currentColor 8%);
+    color: inherit;
+    font: 14px/1 system-ui;
+    cursor: pointer;
+    user-select: none;
+  }
+  .toolbar button:active{ transform: translateY(1px); }
+  .toolbar .icon{
+    width: 16px;
+    height: 16px;
+    display: inline-block;
+  }
+  .toolbar .htm{
+    font-variant-numeric: tabular-nums;
+    letter-spacing: .02em;
+  }
+
+  article {
+    outline: none;
+    padding: 18px max(18px, calc(50vw - 400px));
+    width: 100%;
+    min-height: 100vh;
+    font: 18px / 1.5 system-ui;
+    tab-size: 4;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    white-space: pre-wrap;
+    text-wrap-style: stable;
+    overflow-wrap: break-word;
+  }
+</style>
+
+<div class="toolbar">
+  <button id="newBtn" type="button">New</button>
+  <button id="downloadBtn" type="button" title="Download as HTML">
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M12 3a1 1 0 0 1 1 1v9.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4.01 4a1 1 0 0 1-1.4 0l-4.01-4a1 1 0 1 1 1.4-1.42l2.3 2.3V4a1 1 0 0 1 1-1Zm-7 16a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Z"/>
+    </svg>
+    <span class="htm">htm</span>
+  </button>
+</div>
+
+<article contenteditable="plaintext-only" spellcheck></article>
+
+<script>
+  const article = document.querySelector('article')
+  const newBtn = document.querySelector('#newBtn')
+  const downloadBtn = document.querySelector('#downloadBtn')
+
+  let suppress_save = false
+
+  article.addEventListener('input', debounce(500, save))
+  addEventListener('DOMContentLoaded', load)
+  addEventListener('hashchange', load)
+  addEventListener('load', () => new MutationObserver(() => { if (!suppress_save) save() }).observe(article, {attributeFilter: ['style']}))
+  addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault()
+      download()
+    }
+  })
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js')
+  }
+
+  newBtn.addEventListener('click', () => {
+    if (location.hash === '#new') new_document()
+    else location.hash = 'new'
+  })
+
+  downloadBtn.addEventListener('click', () => download())
+
+  async function load() {
+    try {
+      if (location.hash === '#new') {
+        new_document()
+        return
+      }
+
+      if (location.hash !== '') await set(location.hash)
+      else {
+        await set(localStorage.getItem('hash') ?? '')
+        if (article.textContent) history.replaceState({}, '', await get())
+        article.focus()
+      }
+    } catch (e) {
+      article.textContent = ''
+      article.removeAttribute('style')
+      article.focus()
+    }
+    updateTitle()
+  }
+
+  function new_document() {
+    suppress_save = true
+    article.textContent = ''
+    article.removeAttribute('style')
+    article.focus()
+    updateTitle()
+    queueMicrotask(() => { suppress_save = false })
+  }
+
+  async function save() {
+    const hash = await get()
+    if (location.hash !== hash) history.replaceState({}, '', hash)
+    try { localStorage.setItem('hash', hash) } catch (e) {}
+    updateTitle()
+  }
+
+  async function set(hash) {
+    if (!hash) return
+    const [content, style] = (await decompress(hash.slice(1))).split('\x00')
+    article.textContent = content
+    if (style) article.setAttribute('style', style)
+    else article.removeAttribute('style')
+  }
+
+  async function get() {
+    const style = article.getAttribute('style')
+    const content = article.textContent + (style !== null ? '\x00' + style : '')
+    return '#' + await compress(content)
+  }
+
+  function updateTitle() {
+    const match = article.textContent.match(/^\n*#(.+)\n/)
+    document.title = match?.[1] ?? 'Textarea'
+  }
+
+  async function compress(string) {
+    const byteArray = new TextEncoder().encode(string)
+    const stream = new CompressionStream('deflate-raw')
+    const writer = stream.writable.getWriter()
+    writer.write(byteArray)
+    writer.close()
+    const buffer = await new Response(stream.readable).arrayBuffer()
+    return new Uint8Array(buffer).toBase64({alphabet: 'base64url'})
+  }
+
+  async function decompress(b64) {
+    const byteArray = Uint8Array.fromBase64(b64, {alphabet: 'base64url'})
+    const stream = new DecompressionStream('deflate-raw')
+    const writer = stream.writable.getWriter()
+    writer.write(byteArray)
+    writer.close()
+    const buffer = await new Response(stream.readable).arrayBuffer()
+    return new TextDecoder().decode(buffer)
+  }
+
+  function debounce(ms, fn) {
+    let timer
+    return (...args) => {
+      clearTimeout(timer)
+      timer = setTimeout(() => fn(...args), ms)
+    }
+  }
+
+  async function download() {
+    updateTitle()
+    const doc = document.documentElement.cloneNode(true)
+
+    doc.querySelectorAll('script').forEach(s => s.remove())
+    doc.querySelector('.toolbar')?.remove()
+    doc.querySelector('article').removeAttribute('contenteditable')
+
+    const html = '<!DOCTYPE html>\n' + doc.outerHTML
+
+    if ('showSaveFilePicker' in window) {
+      try {
+        const handle = await showSaveFilePicker({
+          suggestedName: document.title + '.html',
+          types: [{
+            description: 'HTML file',
+            accept: {'text/html': ['.html']},
+          }],
+        })
+        const writable = await handle.createWritable()
+        await writable.write(html)
+        await writable.close()
+        return
+      } catch (e) {
+        if (e.name === 'AbortError') return
+      }
+    }
+
+    const blob = new Blob([html], {type: 'text/html'})
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = document.title + '.html'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+</script>
