@@ -47,6 +47,7 @@
     user-select: none;
   }
   .toolbar button:active{ transform: translateY(1px); }
+  .toolbar button:disabled{ opacity: .75; cursor: default; }
   .toolbar .icon{
     width: 16px;
     height: 16px;
@@ -74,6 +75,14 @@
 
 <div class="toolbar">
   <button id="newBtn" type="button">New</button>
+
+  <button id="shareBtn" type="button" title="Share link">
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M18 16a3 3 0 0 0-2.4 1.2l-6.1-3.05a3.1 3.1 0 0 0 0-2.3l6.1-3.05A3 3 0 1 0 15 6a3 3 0 0 0 .1.75L9 9.8a3 3 0 1 0 0 4.4l6.1 3.05A3 3 0 1 0 18 16Z"/>
+    </svg>
+    <span>Share</span>
+  </button>
+
   <button id="downloadBtn" type="button" title="Download as HTML">
     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path fill="currentColor" d="M12 3a1 1 0 0 1 1 1v9.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4.01 4a1 1 0 0 1-1.4 0l-4.01-4a1 1 0 1 1 1.4-1.42l2.3 2.3V4a1 1 0 0 1 1-1Zm-7 16a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Z"/>
@@ -87,6 +96,7 @@
 <script>
   const article = document.querySelector('article')
   const newBtn = document.querySelector('#newBtn')
+  const shareBtn = document.querySelector('#shareBtn')
   const downloadBtn = document.querySelector('#downloadBtn')
 
   let suppress_save = false
@@ -94,7 +104,10 @@
   article.addEventListener('input', debounce(500, save))
   addEventListener('DOMContentLoaded', load)
   addEventListener('hashchange', load)
-  addEventListener('load', () => new MutationObserver(() => { if (!suppress_save) save() }).observe(article, {attributeFilter: ['style']}))
+  addEventListener('load', () =>
+    new MutationObserver(() => { if (!suppress_save) save() })
+      .observe(article, {attributeFilter: ['style']})
+  )
   addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault()
@@ -111,6 +124,7 @@
     else location.hash = 'new'
   })
 
+  shareBtn.addEventListener('click', () => share_link())
   downloadBtn.addEventListener('click', () => download())
 
   async function load() {
@@ -195,6 +209,55 @@
       clearTimeout(timer)
       timer = setTimeout(() => fn(...args), ms)
     }
+  }
+
+  function flash_share_label(text, ms = 900) {
+    const label = shareBtn.querySelector('span')
+    if (!label) return
+    const prev = label.textContent
+    shareBtn.disabled = true
+    label.textContent = text
+    setTimeout(() => {
+      label.textContent = prev
+      shareBtn.disabled = false
+    }, ms)
+  }
+
+  async function share_link() {
+    // Ensure the URL reflects the latest content before sharing
+    try { await save() } catch (e) {}
+
+    const url = location.href
+    const title = document.title || 'Textarea'
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ title, url })
+        return
+      } catch (e) {
+        // If user cancels the share sheet, do nothing (no fallback).
+        if (e && e.name === 'AbortError') return
+        // Otherwise, fall through to fallback.
+      }
+    }
+
+    await share_fallback(url)
+  }
+
+  async function share_fallback(url) {
+    // Prefer clipboard copy if available; no alerts.
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(url)
+        flash_share_label('Copied')
+        return
+      } catch (e) {
+        // Fall through to prompt
+      }
+    }
+
+    // Fallback: prompt with URL prefilled (typically pre-selected by the browser)
+    prompt('Copy this link:', url)
   }
 
   async function download() {
