@@ -58,9 +58,58 @@
     letter-spacing: .02em;
   }
 
+  /* Bottom status UI */
+  .statusbar{
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 10;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    pointer-events: none;
+  }
+  .pill{
+    pointer-events: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, currentColor 22%, transparent);
+    background: color-mix(in oklab, canvas 92%, currentColor 8%);
+    font: 12px/1.2 system-ui;
+    opacity: .95;
+    white-space: nowrap;
+  }
+
+  .dot{
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: #22c55e; /* green */
+  }
+  .save-pill[data-state="saving"] .dot{
+    background: #facc15; /* yellow */
+  }
+
+  .sr-only{
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+  }
+
   article {
     outline: none;
     padding: 18px max(18px, calc(50vw - 400px));
+    padding-bottom: calc(18px + 44px); /* space for bottom pills */
     width: 100%;
     min-height: 100vh;
     font: 18px / 1.5 system-ui;
@@ -74,21 +123,36 @@
 </style>
 
 <div class="toolbar">
-  <button id="newBtn" type="button">New</button>
+  <button id="newBtn" type="button">+</button>
+
+  <button id="qrBtn" type="button" title="Open QR page" aria-label="Open QR page">
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M3 3h8v8H3V3Zm2 2v4h4V5H5Zm8-2h8v8h-8V3Zm2 2v4h4V5h-4ZM3 13h8v8H3v-8Zm2 2v4h4v-4H5Zm10 0h2v2h-2v-2Zm2 2h2v2h-2v-2Zm-2 2h2v2h-2v-2Zm4-6h2v2h-2v-2Zm0 4h2v4h-2v-4Zm-4 2h2v2h-2v-2Z"/>
+    </svg>
+  </button>
 
   <button id="shareBtn" type="button" title="Share link">
     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path fill="currentColor" d="M18 16a3 3 0 0 0-2.4 1.2l-6.1-3.05a3.1 3.1 0 0 0 0-2.3l6.1-3.05A3 3 0 1 0 15 6a3 3 0 0 0 .1.75L9 9.8a3 3 0 1 0 0 4.4l6.1 3.05A3 3 0 1 0 18 16Z"/>
     </svg>
-    <span>Share</span>
   </button>
 
   <button id="downloadBtn" type="button" title="Download as HTML">
     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path fill="currentColor" d="M12 3a1 1 0 0 1 1 1v9.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4.01 4a1 1 0 0 1-1.4 0l-4.01-4a1 1 0 1 1 1.4-1.42l2.3 2.3V4a1 1 0 0 1 1-1Zm-7 16a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Z"/>
     </svg>
-    <span class="htm">htm</span>
   </button>
+</div>
+
+<div class="statusbar" aria-label="Status">
+  <div id="savePill" class="pill save-pill" role="status" aria-live="polite" aria-label="saved" data-state="saved" title="save state">
+    <span class="dot" aria-hidden="true"></span>
+    <span id="saveText" class="sr-only">saved</span>
+  </div>
+
+  <div id="counterPill" class="pill" role="status" aria-live="polite" aria-label="URL-characters left" title="">
+    <span id="counterText">–</span>
+  </div>
 </div>
 
 <article contenteditable="plaintext-only" spellcheck></article>
@@ -96,18 +160,44 @@
 <script>
   const article = document.querySelector('article')
   const newBtn = document.querySelector('#newBtn')
+  const qrBtn = document.querySelector('#qrBtn')
   const shareBtn = document.querySelector('#shareBtn')
   const downloadBtn = document.querySelector('#downloadBtn')
 
-  let suppress_save = false
+  const savePill = document.querySelector('#savePill')
+  const saveText = document.querySelector('#saveText')
+  const counterPill = document.querySelector('#counterPill')
+  const counterText = document.querySelector('#counterText')
 
-  article.addEventListener('input', debounce(500, save))
+  const urlLimitInfo = detect_url_limit()
+
+  let suppress_save = false
+  const debounced_save = debounce(500, save)
+
+  article.addEventListener('input', () => {
+    set_save_state('saving')
+    debounced_save()
+  })
+  
+ article.addEventListener('focusout', (e) => {
+  const next = e.relatedTarget
+  if (next && next.closest?.('.toolbar')) return
+  set_save_state('saving')
+  debounced_save?.flush?.()
+  save()
+}, true)
+
+
   addEventListener('DOMContentLoaded', load)
   addEventListener('hashchange', load)
   addEventListener('load', () =>
-    new MutationObserver(() => { if (!suppress_save) save() })
-      .observe(article, {attributeFilter: ['style']})
+    new MutationObserver(() => {
+      if (suppress_save) return
+      set_save_state('saving')
+      save()
+    }).observe(article, {attributeFilter: ['style']})
   )
+
   addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault()
@@ -122,6 +212,11 @@
   newBtn.addEventListener('click', () => {
     if (location.hash === '#new') new_document()
     else location.hash = 'new'
+  })
+
+  qrBtn.addEventListener('click', () => {
+    // Carry the current content hash over to the QR page.
+    location.href = 'qr.htm' + location.hash
   })
 
   shareBtn.addEventListener('click', () => share_link())
@@ -146,6 +241,8 @@
       article.focus()
     }
     updateTitle()
+    set_save_state('saved')
+    update_counter()
   }
 
   function new_document() {
@@ -154,6 +251,8 @@
     article.removeAttribute('style')
     article.focus()
     updateTitle()
+    set_save_state('saved')
+    update_counter()
     queueMicrotask(() => { suppress_save = false })
   }
 
@@ -162,6 +261,8 @@
     if (location.hash !== hash) history.replaceState({}, '', hash)
     try { localStorage.setItem('hash', hash) } catch (e) {}
     updateTitle()
+    set_save_state('saved')
+    update_counter()
   }
 
   async function set(hash) {
@@ -181,6 +282,39 @@
   function updateTitle() {
     const match = article.textContent.match(/^\n*#(.+)\n/)
     document.title = match?.[1] ?? 'Textarea'
+  }
+
+  function set_save_state(state) {
+    savePill.dataset.state = state
+    const msg = state === 'saving' ? 'Saving…' : 'Saved'
+    savePill.setAttribute('aria-label', msg)
+    saveText.textContent = msg
+  }
+
+  function update_counter() {
+    const used = location.href.length
+    const limit = urlLimitInfo.limit
+    const remaining = Math.max(0, limit - used)
+
+    counterText.textContent = remaining+ ' left'
+    counterPill.title =
+      urlLimitInfo.label + ': ' +
+      limit+ ' characters · ' +
+      used+ ' used'
+  }
+
+  function detect_url_limit() {
+    const ua = navigator.userAgent
+
+    const isFirefox = /\bFirefox\//.test(ua)
+    const isIE = /\bMSIE\b/.test(ua) || /\bTrident\//.test(ua)
+    const isSafari = /\bSafari\//.test(ua) && !/\bChrome\//.test(ua) && !/\bChromium\//.test(ua) && !/\bEdg\//.test(ua) && !/\bOPR\//.test(ua) && !/\bCriOS\//.test(ua)
+
+    if (isIE) return { limit: 2083, label: 'IE' }
+    if (isFirefox) return { limit: 65536, label: 'Firefox' }
+    if (isSafari) return { limit: 80000, label: 'Safari' }
+
+    return { limit: 2097152, label: 'Chromium' }
   }
 
   async function compress(string) {
@@ -224,7 +358,6 @@
   }
 
   async function share_link() {
-    // Ensure the URL reflects the latest content before sharing
     try { await save() } catch (e) {}
 
     const url = location.href
@@ -235,9 +368,7 @@
         await navigator.share({ title, url })
         return
       } catch (e) {
-        // If user cancels the share sheet, do nothing (no fallback).
         if (e && e.name === 'AbortError') return
-        // Otherwise, fall through to fallback.
       }
     }
 
@@ -245,18 +376,13 @@
   }
 
   async function share_fallback(url) {
-    // Prefer clipboard copy if available; no alerts.
     if (navigator.clipboard && window.isSecureContext) {
       try {
         await navigator.clipboard.writeText(url)
         flash_share_label('Copied')
         return
-      } catch (e) {
-        // Fall through to prompt
-      }
+      } catch (e) {}
     }
-
-    // Fallback: prompt with URL prefilled (typically pre-selected by the browser)
     prompt('Copy this link:', url)
   }
 
@@ -266,6 +392,7 @@
 
     doc.querySelectorAll('script').forEach(s => s.remove())
     doc.querySelector('.toolbar')?.remove()
+    doc.querySelector('.statusbar')?.remove()
     doc.querySelector('article').removeAttribute('contenteditable')
 
     const html = '<!DOCTYPE html>\n' + doc.outerHTML
